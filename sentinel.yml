@@ -1,0 +1,5 @@
+outdated_patterns:
+  "from collections import Callable": "from collections.abc import Callable"
+  "import urllib2": "Use urllib.request and urllib.error instead"
+  "from mock import": "from unittest.mock import"
+  "import cPickle": "import pickle"
