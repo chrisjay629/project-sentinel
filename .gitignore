@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .DS_Store
 .sentinel/suggested_rules_backup_*.yml
+
+.env
+.sentinel/
