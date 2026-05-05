@@ -3,3 +3,11 @@ outdated_patterns:
   "import urllib2": "Use urllib.request and urllib.error instead"
   "from mock import": "from unittest.mock import"
   "import cPickle": "import pickle"
+  "#\\s*TODO": "TODO comment found. Track this in your issue tracker or remove it."
+
+ignore_paths:
+  - sentinel.py
+  - rule_forge.py
+  - .sentinel/
+  - test_code.py
+  - second_test.py
