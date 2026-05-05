@@ -1,22 +1,29 @@
 """
-sentinel/rule_forge.py
+rule_forge.py
 
 Sentinel Rule Forge
 -------------------
 Generates suggested YAML rules from a plain-English request.
 
-Current mode: mock/local generator (no AI API required).
-A clear placeholder marks where a real AI provider can be added later.
+Modes:
+  AI mode   — uses Gemini if GEMINI_API_KEY is set in the environment.
+  Mock mode — uses the local rule library if no API key is found,
+              or if the AI call fails for any reason.
 
 Workflow:
   1. Developer runs:  python3 sentinel.py --suggest-rules "Find outdated Python 2 imports"
-  2. Rule Forge matches the request to a known category.
+  2. Rule Forge tries AI mode first, falls back to mock mode if needed.
   3. Suggested rules are written to .sentinel/suggested_rules.yml.
   4. Developer reviews the file before using any rules.
   5. Nothing is merged into sentinel.yml automatically.
+
+Environment variables (optional):
+  GEMINI_API_KEY        — your Gemini API key (never hardcode this)
+  SENTINEL_AI_PROVIDER  — set to "gemini" to enable AI mode
 """
 
 import os
+import json
 import yaml
 from datetime import datetime
 
@@ -247,34 +254,141 @@ MOCK_RULES = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# AI PROVIDER PLACEHOLDER
-# Replace this function to connect a real AI provider.
-# The function receives the plain-English request and should return
-# a list of rule dicts in the same format as MOCK_RULES above.
+# RULE VALIDATION
+# Checks that every rule returned by AI has the required fields and
+# allowed values before it is saved. Rejects any rule that looks wrong.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def generate_rules_with_ai(request: str) -> list:
+REQUIRED_FIELDS = {"id", "type", "pattern", "message", "severity", "suggested_replacement"}
+ALLOWED_TYPES = {"import", "usage", "comment", "pattern"}
+ALLOWED_SEVERITIES = {"info", "warning", "error"}
+
+
+def validate_rule(rule):
     """
-    PLACEHOLDER — connect a real AI provider here.
+    Returns True if a rule dict has all required fields and valid values.
+    Returns False (and prints a warning) if anything looks wrong.
 
-    To integrate Claude or OpenAI, replace this function body with an API call.
-
-    Example (Claude):
-        import anthropic
-        client = anthropic.Anthropic(api_key="YOUR_KEY")
-        response = client.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": f"Generate Sentinel YAML rules for: {request}"
-            }]
-        )
-        # Parse response and return list of rule dicts
-
-    For now, returns an empty list so the mock generator handles everything.
+    This is a safety check so invalid AI output never gets saved silently.
     """
-    return []
+    if not isinstance(rule, dict):
+        print(f"  ⚠️  Skipping invalid rule (not a dict): {rule}")
+        return False
+
+    missing = REQUIRED_FIELDS - rule.keys()
+    if missing:
+        print(f"  ⚠️  Skipping rule missing fields {missing}: {rule.get('id', '(no id)')}")
+        return False
+
+    if rule["type"] not in ALLOWED_TYPES:
+        print(f"  ⚠️  Skipping rule with unknown type '{rule['type']}': {rule['id']}")
+        return False
+
+    if rule["severity"] not in ALLOWED_SEVERITIES:
+        print(f"  ⚠️  Skipping rule with unknown severity '{rule['severity']}': {rule['id']}")
+        return False
+
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GEMINI AI PROVIDER
+# Called only when GEMINI_API_KEY is set in the environment.
+# Falls back to mock mode on any error.
+# ─────────────────────────────────────────────────────────────────────────────
+
+GEMINI_PROMPT = """
+You are a Python code hygiene assistant for a tool called Sentinel.
+
+Given a plain-English request, return a JSON array of Sentinel rules.
+Each rule must follow this exact format:
+
+[
+  {{
+    "id": "short-kebab-case-id",
+    "type": "import | usage | comment | pattern",
+    "pattern": "regex or plain string to search for",
+    "message": "clear explanation of why this is outdated or risky",
+    "severity": "info | warning | error",
+    "suggested_replacement": "what to use instead"
+  }}
+]
+
+Rules:
+- Return only a valid JSON array. No explanation, no markdown, no code blocks.
+- Use "import" type for import statements.
+- Use "usage" type for function calls or syntax patterns.
+- Use "comment" type for comment patterns.
+- Use "pattern" for anything else.
+- severity must be exactly one of: info, warning, error.
+- Patterns should be plain strings unless a regex is clearly needed.
+
+Request: {request}
+"""
+
+
+def generate_rules_with_ai(request):
+    """
+    Calls the Gemini API to generate rules from the plain-English request.
+
+    How it works:
+    1. Reads GEMINI_API_KEY from the environment (never hardcoded).
+    2. Checks SENTINEL_AI_PROVIDER is set to "gemini".
+    3. Sends the request to Gemini with a strict JSON-only prompt.
+    4. Parses and validates the response.
+    5. Returns a list of valid rule dicts, or an empty list on any failure.
+
+    Returning an empty list tells generate_suggested_rules() to use mock mode.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    provider = os.environ.get("SENTINEL_AI_PROVIDER", "").strip().lower()
+
+    if not api_key or provider != "gemini":
+        return []
+
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        print("  ⚠️  google-generativeai is not installed. Falling back to mock mode.")
+        print("       Run: pip install google-generativeai")
+        return []
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+
+        prompt = GEMINI_PROMPT.format(request=request)
+        response = model.generate_content(prompt)
+        raw = response.text.strip()
+
+        # Strip markdown code fences if Gemini wraps the JSON anyway
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
+        rules = json.loads(raw)
+
+        if not isinstance(rules, list):
+            print("  ⚠️  Gemini returned unexpected format. Falling back to mock mode.")
+            return []
+
+        # Validate every rule — skip any that fail
+        valid_rules = [r for r in rules if validate_rule(r)]
+
+        if not valid_rules:
+            print("  ⚠️  No valid rules in Gemini response. Falling back to mock mode.")
+            return []
+
+        return valid_rules
+
+    except json.JSONDecodeError:
+        print("  ⚠️  Gemini response was not valid JSON. Falling back to mock mode.")
+        return []
+    except Exception as e:
+        print(f"  ⚠️  Gemini API error: {e}. Falling back to mock mode.")
+        return []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -301,75 +415,60 @@ def match_request_to_category(request):
     return None
 
 
-def generate_suggested_rules(request: str) -> list:
+def generate_suggested_rules(request):
     """
     Main rule generation function.
 
-    1. First tries the AI provider (placeholder — returns empty list for now).
-    2. Falls back to the mock local library if no AI rules are returned.
-    3. Returns a list of rule dicts, or an empty list if nothing matched.
+    1. Tries Gemini AI if GEMINI_API_KEY and SENTINEL_AI_PROVIDER=gemini are set.
+    2. Falls back to the local mock library if AI is unavailable or fails.
+    3. Returns a tuple: (rules list, mode string)
+       mode is either "ai (gemini)" or "mock (local)"
     """
-    # Try AI provider first (placeholder)
     ai_rules = generate_rules_with_ai(request)
     if ai_rules:
-        return ai_rules
+        return ai_rules, "ai (gemini)"
 
-    # Fall back to mock library
     category = match_request_to_category(request)
     if category:
-        return MOCK_RULES[category]["rules"]
+        return MOCK_RULES[category]["rules"], "mock (local)"
 
-    return []
+    return [], "mock (local)"
 
 
-def write_suggested_rules(request: str, rules: list) -> str:
+def write_suggested_rules(request, rules, mode):
     """
     Writes the suggested rules to .sentinel/suggested_rules.yml.
 
     - Creates the .sentinel/ folder if it does not exist.
     - If suggested_rules.yml already exists, backs it up before overwriting.
-    - Adds a header comment explaining the file is for review only.
+    - Stamps the generator mode (AI or mock) in the file header.
     - Returns the path to the written file.
     """
-    # Create the .sentinel/ directory if it doesn't exist
     sentinel_dir = ".sentinel"
     os.makedirs(sentinel_dir, exist_ok=True)
 
     output_path = os.path.join(sentinel_dir, "suggested_rules.yml")
 
-    # Back up any existing suggested_rules.yml before overwriting
+    # Back up any existing file before overwriting
     if os.path.exists(output_path):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = os.path.join(sentinel_dir, f"suggested_rules_backup_{timestamp}.yml")
         os.rename(output_path, backup_path)
         print(f"\n  ⚠️  Existing suggested_rules.yml backed up to: {backup_path}")
 
-    # Build the output structure
-    output = {
-        "# Sentinel Rule Forge — suggested rules (review before use)": None,
-        "meta": {
-            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "request": request,
-            "status": "SUGGESTED — not active until you copy rules to sentinel.yml",
-            "generator": "mock (local) — replace generate_rules_with_ai() to use an AI provider",
-        },
-        "rules": rules
-    }
-
-    # Write the file with a plain-text review header
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("# ─────────────────────────────────────────────────────\n")
         f.write("# Sentinel Rule Forge — SUGGESTED RULES\n")
         f.write("# ─────────────────────────────────────────────────────\n")
         f.write("# These rules were generated from your request:\n")
-        f.write(f"#   \"{request}\"\n")
+        f.write(f'#   "{request}"\n')
         f.write("#\n")
-        f.write("# STATUS: For review only. Not active.\n")
-        f.write("# To use: copy rules you approve into sentinel.yml\n")
-        f.write("# Do NOT run --apply until you have reviewed this file.\n")
+        f.write(f"# Generator : {mode}\n")
+        f.write("# Status    : For review only. Not active.\n")
+        f.write("# To use    : copy approved rules into sentinel.yml\n")
         f.write("# ─────────────────────────────────────────────────────\n\n")
-        f.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"# Request: \"{request}\"\n\n")
+        f.write(f"# Generated : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f'# Request   : "{request}"\n\n')
 
         yaml.dump({"rules": rules}, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
@@ -389,7 +488,12 @@ def run_rule_forge(request: str) -> None:
     print(f"  Request: \"{request}\"")
     print(f"  Generating suggested rules...\n")
 
-    rules = generate_suggested_rules(request)
+    rules, mode = generate_suggested_rules(request)
+
+    if mode == "ai (gemini)":
+        print(f"  ✓ Mode: AI (Gemini)")
+    else:
+        print(f"  ✓ Mode: mock/local (no API key or AI unavailable)")
 
     if not rules:
         print("  No matching rules found for that request.")
@@ -402,7 +506,7 @@ def run_rule_forge(request: str) -> None:
         print("    python3 sentinel.py --suggest-rules \"Find broad except statements\"\n")
         return
 
-    output_path = write_suggested_rules(request, rules)
+    output_path = write_suggested_rules(request, rules, mode)
 
     print(f"  ✓ {len(rules)} rule(s) suggested.\n")
     print(f"  Saved to: {output_path}\n")

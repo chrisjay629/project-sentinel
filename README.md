@@ -43,8 +43,6 @@ python3 sentinel.py --preview --dir demo
 
 3. Sentinel will show 5 findings from `demo/demo_target.py`. Nothing is changed.
 
-  If you see 5 findings from demo/demo_target.py, Sentinel is working correctly.
-
 4. When you are ready to scan your own code:
 
 ```bash
@@ -232,6 +230,114 @@ cat .sentinel/suggested_rules.yml
 - It does not automatically accept Rule Forge suggestions
 - It is not a replacement for a full linter like `pylint` or `flake8`
 - It is a simple, safe MVP that does exactly what you tell it to
+
+---
+
+## Connecting Gemini to Rule Forge (optional)
+
+Rule Forge can use Gemini AI to generate rules from any plain-English request — not just the built-in categories. This is optional. Sentinel works fine without it.
+
+### Install the Gemini dependency
+
+```bash
+pip install google-generativeai
+```
+
+### Set your API key
+
+Never hardcode an API key in your code. Store it in a `.env` file instead:
+
+1. Copy `.env.example` to `.env`:
+
+```bash
+cp .env.example .env
+```
+
+2. Open `.env` and replace the placeholder with your real key:
+
+```
+GEMINI_API_KEY=your_actual_key_here
+SENTINEL_AI_PROVIDER=gemini
+```
+
+3. Load the variables into your terminal session before running Sentinel:
+
+```bash
+export GEMINI_API_KEY=your_actual_key_here
+export SENTINEL_AI_PROVIDER=gemini
+```
+
+Or if you have `python-dotenv` installed, it can load `.env` automatically.
+
+### Run Rule Forge in AI mode
+
+```bash
+python3 sentinel.py --suggest-rules "Find hardcoded passwords"
+```
+
+Rule Forge will print which mode it used:
+
+```
+  ✓ Mode: AI (Gemini)
+```
+
+or
+
+```
+  ✓ Mode: mock/local (no API key or AI unavailable)
+```
+
+### How fallback mode works
+
+Sentinel falls back to the local mock generator automatically if:
+
+- `GEMINI_API_KEY` is not set
+- `SENTINEL_AI_PROVIDER` is not set to `gemini`
+- The `google-generativeai` package is not installed
+- Gemini returns an error or invalid response
+- Gemini returns a response that fails validation
+
+In every fallback case, Sentinel prints a warning and continues. It never crashes silently.
+
+---
+
+## AI Rule Forge Safety
+
+Rule Forge is designed to connect to a real AI provider in a future update. Before that happens, here is what you need to know to keep your project safe.
+
+**API keys must never be hardcoded**
+
+Never paste an API key directly into `rule_forge.py` or any other code file. If you commit a key to GitHub — even for a few minutes — it can be scraped by bots and misused.
+
+**Use a `.env` file instead**
+
+When the AI provider is connected, your API key will be stored in a file called `.env` in your project root. This file is already listed in `.gitignore`, which means Git will never include it in a commit.
+
+A safe template is provided at `.env.example`:
+
+```
+GEMINI_API_KEY=your_api_key_here
+SENTINEL_AI_PROVIDER=gemini
+```
+
+To use it:
+1. Copy `.env.example` to `.env`
+2. Replace `your_api_key_here` with your real key
+3. Never share or commit the `.env` file
+
+**Sentinel works without an API key**
+
+If no API key is configured, Rule Forge automatically falls back to the local mock generator. All existing features — `--preview`, `--apply`, and `--suggest-rules` — continue to work exactly as before.
+
+**AI suggestions are always review-only**
+
+Even when a real AI provider is connected, Rule Forge will only write suggestions to `.sentinel/suggested_rules.yml`. It will never:
+
+- Edit your source code
+- Modify `sentinel.yml` automatically
+- Apply any changes without your approval
+
+You stay in control. Every suggestion requires a human decision before it becomes an active rule.
 
 ---
 
