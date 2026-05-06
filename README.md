@@ -240,8 +240,10 @@ Rule Forge can use Gemini AI to generate rules from any plain-English request â€
 ### Install the Gemini dependency
 
 ```bash
-pip install google-generativeai
+pip install google-genai
 ```
+
+> **Note:** This project previously used `google-generativeai`. That package is deprecated and has been replaced by `google-genai`, which is the current official Google AI SDK for Python.
 
 ### Set your API key
 
