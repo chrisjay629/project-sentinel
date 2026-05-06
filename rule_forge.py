@@ -347,18 +347,20 @@ def generate_rules_with_ai(request):
         return []
 
     try:
-        import google.generativeai as genai
+        from google import genai
     except ImportError:
-        print("  ⚠️  google-generativeai is not installed. Falling back to mock mode.")
-        print("       Run: pip install google-generativeai")
+        print("  ⚠️  google-genai is not installed. Falling back to mock mode.")
+        print("       Run: pip install google-genai")
         return []
 
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        client = genai.Client(api_key=api_key)
 
         prompt = GEMINI_PROMPT.format(request=request)
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
         raw = response.text.strip()
 
         # Strip markdown code fences if Gemini wraps the JSON anyway
