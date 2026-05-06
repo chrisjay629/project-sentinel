@@ -64,7 +64,7 @@ python3 sentinel.py --apply
 | File | What it does |
 |---|---|
 | `sentinel.py` | The main program. Runs preview, apply, and suggest-rules. |
-| `rule_forge.py` | Generates suggested rules from plain-English requests. Uses a local mock generator for now — no AI API connected yet. |
+| `rule_forge.py` | Generates suggested rules from plain-English requests. Supports optional Gemini AI mode, with automatic fallback to a local mock generator if no API key is set. |
 | `sentinel.yml` | The active rule file. Only rules in this file are actually used by Sentinel. |
 | `demo/demo_target.py` | A clean demo file used for testing Sentinel safely. |
 | `.sentinel/suggested_rules.yml` | Created by Rule Forge. Review-only — not active until you manually copy approved rules into `sentinel.yml`. |
@@ -247,7 +247,22 @@ pip install google-genai
 
 ### Set your API key
 
-Never hardcode an API key in your code. Store it in a `.env` file instead:
+Never hardcode an API key in your code. Sentinel reads it from your terminal environment instead.
+
+**The required step — export your key in the terminal:**
+
+```bash
+export GEMINI_API_KEY=your_actual_key_here
+export SENTINEL_AI_PROVIDER=gemini
+```
+
+You need to run these two lines each time you open a new terminal session before using AI mode.
+
+**Optional: use a `.env` file as a personal reference**
+
+Sentinel does not automatically load `.env` yet. The `.env` file is only a private local reference for now. You still need to export the values in your terminal before using AI mode.
+
+That said, keeping a `.env` file locally is still useful — it means your key is written down somewhere safe and easy to copy from.
 
 1. Copy `.env.example` to `.env`:
 
@@ -255,21 +270,14 @@ Never hardcode an API key in your code. Store it in a `.env` file instead:
 cp .env.example .env
 ```
 
-2. Open `.env` and replace the placeholder with your real key:
+2. Open `.env` and fill in your real key:
 
 ```
 GEMINI_API_KEY=your_actual_key_here
 SENTINEL_AI_PROVIDER=gemini
 ```
 
-3. Load the variables into your terminal session before running Sentinel:
-
-```bash
-export GEMINI_API_KEY=your_actual_key_here
-export SENTINEL_AI_PROVIDER=gemini
-```
-
-Or if you have `python-dotenv` installed, it can load `.env` automatically.
+3. Never share or commit `.env` — it is already blocked by `.gitignore`.
 
 ### Run Rule Forge in AI mode
 
@@ -295,7 +303,7 @@ Sentinel falls back to the local mock generator automatically if:
 
 - `GEMINI_API_KEY` is not set
 - `SENTINEL_AI_PROVIDER` is not set to `gemini`
-- The `google-generativeai` package is not installed
+- The `google-genai` package is not installed
 - Gemini returns an error or invalid response
 - Gemini returns a response that fails validation
 
@@ -305,15 +313,17 @@ In every fallback case, Sentinel prints a warning and continues. It never crashe
 
 ## AI Rule Forge Safety
 
-Rule Forge is designed to connect to a real AI provider in a future update. Before that happens, here is what you need to know to keep your project safe.
+Rule Forge supports optional Gemini AI. Whether you use it or not, here is what you need to know to keep your project safe.
 
 **API keys must never be hardcoded**
 
 Never paste an API key directly into `rule_forge.py` or any other code file. If you commit a key to GitHub — even for a few minutes — it can be scraped by bots and misused.
 
-**Use a `.env` file instead**
+### Use environment variables, with `.env` as a local reference
 
-When the AI provider is connected, your API key will be stored in a file called `.env` in your project root. This file is already listed in `.gitignore`, which means Git will never include it in a commit.
+Your API key should never go in a code file. Sentinel reads API settings from environment variables in your terminal.
+
+A `.env` file can still be useful as a private local reference, but Sentinel does not load `.env` automatically yet. You still need to export the variables in your terminal before using AI mode.
 
 A safe template is provided at `.env.example`:
 
@@ -325,7 +335,8 @@ SENTINEL_AI_PROVIDER=gemini
 To use it:
 1. Copy `.env.example` to `.env`
 2. Replace `your_api_key_here` with your real key
-3. Never share or commit the `.env` file
+3. Export the values in your terminal before running AI mode
+4. Never share or commit the `.env` file
 
 **Sentinel works without an API key**
 
@@ -345,7 +356,7 @@ You stay in control. Every suggestion requires a human decision before it become
 
 ## Future roadmap
 
-- Connect Rule Forge to a real AI provider (Claude, OpenAI, etc.)
+- Add support for more AI providers such as Claude or OpenAI
 - Add interactive rule approval — step through suggestions one by one
 - Add pre-commit hook support — run Sentinel automatically before each commit
 - Add CI / GitHub Actions support
