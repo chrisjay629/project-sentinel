@@ -2,6 +2,10 @@
 
 Sentinel is a small Python tool that scans your code for patterns your team says are outdated or risky.
 
+## Workflow cheat sheet
+
+![Project Sentinel workflow cheat sheet](docs/assets/sentinel-cheat-sheet.png)
+
 > **Sentinel does not decide what is wrong with your code. You write the rules, and Sentinel looks for them.**
 
 ---
